@@ -7,6 +7,7 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 #include <nginx.h>
+#include <ngx_files.h>
 
 #if (NGX_HAVE_OPENSSL_MD5_H)
 #include <openssl/md5.h>
@@ -24,6 +25,13 @@
 #include <openssl/sha.h>
 #else
 #include <sha.h>
+#endif
+
+#if (NGX_WIN32)
+#include <io.h>
+#include <string.h>
+#define strncasecmp _strnicmp
+#define ftruncate _chsize
 #endif
 
 #define MULTIPART_FORM_DATA_STRING              "multipart/form-data"
@@ -1949,7 +1957,7 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
     ngx_http_upload_merger_state_t ms;
     off_t        remaining;
     ssize_t      rc;
-    __attribute__((__unused__)) int result;
+    int result;
     ngx_buf_t    in_buf;
     ngx_buf_t    out_buf;
     ngx_http_upload_loc_conf_t  *ulcf = ngx_http_get_module_loc_conf(u->request, ngx_http_upload_module);
@@ -1964,7 +1972,9 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
         return NGX_ERROR;
     }
 
+    #if !(NGX_WIN32)
     ngx_lock_fd(state_file->fd);
+    #endif
 
     ngx_fd_info(state_file->fd, &state_file->info);
 
@@ -1997,9 +2007,9 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
         in_buf.file_pos = state_file->offset;
         in_buf.pos = in_buf.last = in_buf.start;
 
-        if(state_file->offset < state_file->info.st_size) {
-            remaining = state_file->info.st_size - state_file->offset > in_buf.end - in_buf.start
-                ? in_buf.end - in_buf.start : state_file->info.st_size - state_file->offset;
+        if(state_file->offset < state_file->info.nFileSizeHigh) {
+            remaining = state_file->info.nFileSizeHigh - state_file->offset > in_buf.end - in_buf.start
+                ? in_buf.end - in_buf.start : state_file->info.nFileSizeHigh - state_file->offset;
 
             rc = ngx_read_file(state_file, in_buf.pos, remaining, state_file->offset);
 
@@ -2010,7 +2020,7 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
             in_buf.last = in_buf.pos + rc;
         }
 
-        in_buf.last_buf = state_file->offset == state_file->info.st_size ? 1 : 0;
+        in_buf.last_buf = state_file->offset == state_file->info.nFileSizeHigh ? 1 : 0;
 
         if(out_buf.pos != out_buf.last) {
             rc = ngx_write_file(state_file, out_buf.pos, out_buf.last - out_buf.pos, out_buf.file_pos);
@@ -2030,7 +2040,7 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
             rc = NGX_ERROR;
             goto failed;
         }
-    } while(state_file->offset < state_file->info.st_size);
+    } while(state_file->offset < state_file->info.nFileSizeHigh);
 
     if(out_buf.pos != out_buf.last) {
         rc = ngx_write_file(state_file, out_buf.pos, out_buf.last - out_buf.pos, out_buf.file_pos);
@@ -2042,14 +2052,16 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
         out_buf.file_pos += out_buf.last - out_buf.pos;
     }
 
-    if(out_buf.file_pos < state_file->info.st_size) {
+    if(out_buf.file_pos < state_file->info.nFileSizeHigh) {
         result = ftruncate(state_file->fd, out_buf.file_pos);
     }
 
     rc = ms.complete_ranges ? NGX_OK : NGX_AGAIN;
 
 failed:
+    #if !(NGX_WIN32)
     ngx_unlock_fd(state_file->fd);
+    #endif
 
     ngx_close_file(state_file->fd);
 
