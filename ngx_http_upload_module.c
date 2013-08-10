@@ -2006,8 +2006,11 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
     do {
         in_buf.file_pos = state_file->offset;
         in_buf.pos = in_buf.last = in_buf.start;
-
+#if (NGX_WIN32) 
         if(state_file->offset < state_file->info.nFileSizeHigh) {
+#else
+  	if(state_file->offset < state_file->info.st_size) {
+#endif
             remaining = state_file->info.nFileSizeHigh - state_file->offset > in_buf.end - in_buf.start
                 ? in_buf.end - in_buf.start : state_file->info.nFileSizeHigh - state_file->offset;
 
@@ -2020,8 +2023,11 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
             in_buf.last = in_buf.pos + rc;
         }
 
+#if (NGX_WIN32) 
         in_buf.last_buf = state_file->offset == state_file->info.nFileSizeHigh ? 1 : 0;
-
+#else
+  	in_buf.last_buf = state_file->offset == state_file->info.st_size ? 1 : 0;
+#endif
         if(out_buf.pos != out_buf.last) {
             rc = ngx_write_file(state_file, out_buf.pos, out_buf.last - out_buf.pos, out_buf.file_pos);
 
@@ -2040,7 +2046,13 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
             rc = NGX_ERROR;
             goto failed;
         }
+        
+#if (NGX_WIN32)         
     } while(state_file->offset < state_file->info.nFileSizeHigh);
+#else
+    } while(state_file->offset < state_file->info.st_size);
+#endif
+
 
     if(out_buf.pos != out_buf.last) {
         rc = ngx_write_file(state_file, out_buf.pos, out_buf.last - out_buf.pos, out_buf.file_pos);
@@ -2052,7 +2064,11 @@ ngx_http_upload_merge_ranges(ngx_http_upload_ctx_t *u, ngx_http_upload_range_t *
         out_buf.file_pos += out_buf.last - out_buf.pos;
     }
 
+#if (NGX_WIN32) 
     if(out_buf.file_pos < state_file->info.nFileSizeHigh) {
+#else
+    if(out_buf.file_pos < state_file->info.st_size) {
+#endif
         result = ftruncate(state_file->fd, out_buf.file_pos);
     }
 
